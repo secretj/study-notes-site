@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data: https:; connect-src https://api.github.com http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'none'; frame-src 'none'">
+<meta name="referrer" content="no-referrer">
+<title>공부 기록</title>
+<link rel="stylesheet" href="style.css">
+<script src="vendor/marked.min.js"></script>
+<script src="vendor/purify.min.js"></script>
+</head>
+<body class="memo">
+
+<!-- 로그인 -->
+<section id="login" class="login" hidden>
+  <form id="login-form" class="login-card">
+    <div class="eyebrow">Study notes</div>
+    <h1>공부 기록</h1>
+    <p class="lead">비공개 저장소의 글을 읽고 고치려면 GitHub 토큰이 필요해요. 토큰은 이 브라우저에만 저장돼요.</p>
+    <label>저장소<input id="f-repo" required placeholder="owner/repo" autocomplete="off"></label>
+    <label>브랜치<input id="f-branch" required autocomplete="off"></label>
+    <label>토큰<input id="f-token" type="password" required autocomplete="off" placeholder="github_pat_..."></label>
+    <button type="submit" class="btn primary wide">들어가기</button>
+    <p id="login-error" class="error" hidden></p>
+    <details class="help">
+      <summary>토큰 만드는 법</summary>
+      <ol>
+        <li><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Fine-grained token 만들기</a>를 열어요.</li>
+        <li>Repository access 에서 <b>Only select repositories</b> 를 고르고 글 저장소 하나만 넣어요.</li>
+        <li>Permissions → Repository permissions → <b>Contents: Read and write</b> 만 줘요.</li>
+        <li>만든 토큰(<code>github_pat_</code> 로 시작)을 위에 붙여 넣어요.</li>
+      </ol>
+    </details>
+  </form>
+</section>
+
+<!-- 앱 -->
+<div id="app" hidden>
+  <header class="topbar">
+    <div class="inner">
+      <button id="btn-menu" class="btn icon only-narrow" aria-label="목록 열기">☰</button>
+      <a href="#/" class="t">공부 기록 <span id="count-badge"></span></a>
+      <span class="spacer"></span>
+      <span id="status" class="badge"></span>
+      <button id="btn-new-page" class="btn">새 글</button>
+      <button id="btn-upload" class="btn">올리기</button>
+      <button id="btn-logout" class="btn ghost">나가기</button>
+    </div>
+  </header>
+
+  <div class="shell">
+    <aside id="sidebar" class="sidebar">
+      <input id="search" class="search" type="search" placeholder="제목·태그로 찾기">
+      <div class="tabs" role="tablist">
+        <button role="tab" data-tab="topic" class="on">주제</button>
+        <button role="tab" data-tab="tag">태그</button>
+        <button role="tab" data-tab="year">연도</button>
+      </div>
+      <nav id="nav" class="nav" aria-label="글 목록"></nav>
+      <div class="side-foot">
+        <button id="btn-new-topic" class="btn small">새 주제</button>
+        <label class="check"><input id="show-hidden" type="checkbox"> 숨긴 파일 보기</label>
+      </div>
+    </aside>
+
+    <main id="main" class="main">
+      <div id="screen"></div>
+
+      <section id="editor" class="editor" hidden>
+        <div class="editor-head">
+          <div class="eyebrow" id="editor-path"></div>
+          <div class="fields">
+            <label class="grow">제목<input id="e-title"></label>
+            <label>날짜<input id="e-date" type="date"></label>
+            <label class="grow">태그 <span class="hint">쉼표로 구분</span><input id="e-tags" list="tag-list"></label>
+          </div>
+          <div class="editor-bar">
+            <button id="btn-insert-image" class="btn small">이미지 넣기</button>
+            <span class="hint">이미지를 본문에 끌어다 놓아도 돼요</span>
+            <span class="spacer"></span>
+            <button id="btn-cancel" class="btn ghost">취소</button>
+            <button id="btn-save" class="btn primary">저장</button>
+          </div>
+        </div>
+        <div class="editor-panes">
+          <textarea id="source" spellcheck="false" aria-label="본문"></textarea>
+          <article id="preview" class="prose"></article>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div id="drop" class="drop" hidden><div>여기에 놓으면 <b id="drop-target"></b> 에 올려요</div></div>
+</div>
+
+<dialog id="modal">
+  <form method="dialog" id="modal-form">
+    <h2 id="modal-title"></h2>
+    <div id="modal-body"></div>
+    <div class="modal-actions">
+      <button value="cancel" class="btn ghost" formnovalidate>취소</button>
+      <button value="ok" id="modal-ok" class="btn primary">확인</button>
+    </div>
+  </form>
+</dialog>
+
+<datalist id="tag-list"></datalist>
+<datalist id="group-list"></datalist>
+<input id="file-input" type="file" multiple hidden>
+<input id="image-input" type="file" accept="image/*" multiple hidden>
+<div id="toast" class="toast" role="status" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
