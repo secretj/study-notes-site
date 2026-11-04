@@ -17,7 +17,7 @@ const PROFILE = {
   name: "박진형",
   handle: "secretj",
   role: "Backend Developer",
-  tagline: "PHP 하다가 요즘은 Go 붙잡고 있음. 까먹을까 봐 적어 두는 곳",
+  tagline: "백엔드 개발자 · PHP · Go · Java/Spring · MariaDB · Redis · Elasticsearch · RabbitMQ",
   links: [
     ["GitHub", "https://github.com/secretj"],
     ["이력서", "https://jinhyeong.hichecky.com"],
