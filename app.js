@@ -21,7 +21,6 @@ const PROFILE = {
   links: [
     ["GitHub", "https://github.com/secretj"],
     ["이력서", "https://jinhyeong.hichecky.com"],
-    ["글 저장소", "https://github.com/secretj/study-notes"],
   ],
 };
 const CFG_KEY = "study-notes.cfg";
