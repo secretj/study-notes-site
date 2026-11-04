@@ -282,3 +282,19 @@ dialog h2 {font-size:18px; font-weight:600; letter-spacing:-.02em;}
 @media (prefers-reduced-motion: reduce) {
   * {animation:none !important; transition:none !important;}
 }
+
+/* 주제 순서·하위 폴더·경로 */
+#modal-body [hidden] {display:none !important;}
+.foot-btns {display:flex; gap:6px;}
+.sec-head #h-order {margin-left:auto;}
+.reorder {display:flex; flex-direction:column; gap:12px; max-height:min(60vh, 520px); overflow:auto; padding-right:4px;}
+.ro-h {font-size:12px; font-weight:600; color:var(--ink-3); letter-spacing:.04em; margin-bottom:4px;}
+.reorder ol {list-style:none; margin:0; padding:0; border:1px solid var(--line); border-radius:var(--radius-9); overflow:hidden;}
+.reorder li {display:flex; align-items:center; gap:8px; padding:5px 6px 5px 10px; border-top:1px solid var(--line); font-size:13.5px; color:var(--ink);}
+.reorder li:first-child {border-top:0;}
+.reorder li .lbl {flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.reorder li .dot {width:8px; height:8px; border-radius:2px; flex:none;}
+.reorder li .btn {padding:2px 8px; min-width:0;}
+.eyebrow .sep {margin:0 6px; color:var(--ink-3);}
+.node ul ul ul {margin-left:8px;}
+.doc .eyebrow a {text-transform:none;}

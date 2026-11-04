@@ -320,8 +320,9 @@ async function guard(fn) {
   }
 }
 
-/* 모달: fields = [{name, label, value, type, options, hint, list}] → 값 객체, 취소면 null */
-function modal({title, html = "", fields = [], ok = "확인", danger = false}) {
+/* 모달: fields = [{name, label, value, type, options, hint, list, when}] → 값 객체, 취소면 null
+ * when(값 객체) 가 false 면 그 칸을 숨기고 필수 검사에서도 뺀다. onOpen(body) 는 열린 직후 한 번 부른다. */
+function modal({title, html = "", fields = [], ok = "확인", danger = false, onOpen = null, read = null}) {
   return new Promise((resolve) => {
     const d = $("#modal");
     $("#modal-title").textContent = title;
@@ -351,22 +352,34 @@ function modal({title, html = "", fields = [], ok = "확인", danger = false}) {
       el.name = f.name;
       if (f.type !== "checkbox") lab.append(el);
       body.append(lab);
+      f.lab = lab;
+      f.el = el;
     }
+    const values = () => Object.fromEntries(fields.map((f) => [f.name, f.type === "checkbox" ? f.el.checked : f.el.value.trim()]));
+    const sync = () => {
+      const v = values();
+      for (const f of fields) {
+        if (!f.when) continue;
+        const show = !!f.when(v);
+        f.lab.hidden = !show;
+        f.el.required = !!f.required && show;
+      }
+    };
+    body.oninput = body.onchange = sync;
+    sync();
     const okBtn = $("#modal-ok");
     okBtn.textContent = ok;
     okBtn.className = "btn " + (danger ? "danger" : "primary");
     d.onclose = () => {
       if (d.returnValue !== "ok") return resolve(null);
-      const out = {};
-      for (const f of fields) {
-        const el = body.querySelector(`[name="${f.name}"]`);
-        out[f.name] = f.type === "checkbox" ? el.checked : el.value.trim();
-      }
+      const out = values();
+      if (read) Object.assign(out, read(body));
       resolve(out);
     };
     d.returnValue = "";
     d.showModal();
-    const first = body.querySelector("input:not([type=checkbox]),select");
+    if (onOpen) onOpen(body);
+    const first = body.querySelector("label:not([hidden]) input:not([type=checkbox]),label:not([hidden]) select");
     if (first) first.focus();
   });
 }
@@ -378,6 +391,27 @@ const pageOf = (path) => S.index.pages.find((p) => p.path === path);
 const topicName = (folder) => S.index.topics[folder]?.name || folder;
 const topicGroup = (folder) => S.index.topics[folder]?.group || "기타";
 const groupColor = (g) => `var(${GROUP_COLOR[g] || "--line-2"})`;
+/* 주제 순서: topics[폴더].order 가 작은 것부터, 같으면 이름순. order 가 없으면 0 으로 보고 맨 앞에 둔다
+ * (새 주제는 max+1 을 받아 맨 뒤로 간다). build_index.py 의 README 도 같은 규칙 */
+const topicOrder = (folder) => S.index.topics[folder]?.order ?? 0;
+const cmpTopic = (a, b) => topicOrder(a) - topicOrder(b) || topicName(a).localeCompare(topicName(b), "ko");
+const nextOrder = () => Math.max(0, ...Object.values(S.index.topics).map((t) => t.order || 0)) + 1;
+/* 폴더 표시 이름: 주제면 주제 이름, 글과 짝인 폴더(02-X/ ↔ 02-X.md)면 그 글 제목, 아니면 번호를 뗀 폴더 이름 */
+function folderLabel(dir) {
+  if (!dir.includes("/")) return topicName(dir);
+  return pageOf(dir + ".md")?.title || prettyName(dir.split("/").pop());
+}
+/* 경로의 상위 폴더들을 링크로 잇는다. 글과 짝인 폴더는 그 글로 간다 */
+function crumbs(path, self = false) {
+  const parts = path.split("/");
+  const out = [];
+  for (let i = 1; i < parts.length + (self ? 1 : 0); i++) {
+    const dir = parts.slice(0, i).join("/");
+    const href = pageOf(dir + ".md") ? `#/p/${encPath(dir + ".md")}` : `#/f/${encPath(dir)}`;
+    out.push(`<a href="${href}">${esc(folderLabel(dir))}</a>`);
+  }
+  return out.join(`<span class="sep">/</span>`);
+}
 const prettyName = (name) => name.replace(/\.md$/, "").replace(/^\d{2,}-/, "");
 
 function visiblePaths() {
@@ -449,7 +483,7 @@ function renderTopicTree() {
     h.textContent = g;
     frag.append(h);
     const ul = document.createElement("ul");
-    for (const node of groups.get(g).sort((a, b) => topicName(a.name).localeCompare(topicName(b.name), "ko"))) {
+    for (const node of groups.get(g).sort((a, b) => cmpTopic(a.name, b.name))) {
       ul.append(renderDir(node, 0, searching));
     }
     frag.append(ul);
@@ -582,8 +616,9 @@ function folderMenu(e, folder) {
   const top = !folder.includes("/");
   popMenu(e, [
     ["여기에 새 글", () => newPage(folder)],
+    ["여기에 하위 폴더", () => newTopic(folder)],
     ["여기에 파일 올리기", () => pickUpload(folder)],
-    ...(top ? [["주제 이름·묶음 바꾸기", () => editTopic(folder)]] : []),
+    ...(top ? [["주제 이름·묶음 바꾸기", () => editTopic(folder)], ["주제 순서 바꾸기", reorderTopics]] : []),
     ["폴더 이름 바꾸기", () => renamePath(folder, true)],
     ["폴더 삭제", () => deletePath(folder, true), "danger"],
   ]);
@@ -619,7 +654,7 @@ async function render() {
   if (r.kind === "home") return renderHome(screen);
   if (r.kind === "t") return renderList(screen, `태그`, r.arg, S.index.pages.filter((p) => p.tags.includes(r.arg)));
   if (r.kind === "y") return renderList(screen, `연도`, r.arg, S.index.pages.filter((p) => (p.date ? p.date.slice(0, 4) : "날짜 없음") === r.arg), true);
-  if (r.kind === "f") return renderList(screen, topicGroup(r.arg.split("/")[0]), r.arg.includes("/") ? prettyName(r.arg.split("/").pop()) : topicName(r.arg), S.index.pages.filter((p) => p.path.startsWith(r.arg + "/")), false, r.arg);
+  if (r.kind === "f") return renderList(screen, topicGroup(r.arg.split("/")[0]), folderLabel(r.arg), S.index.pages.filter((p) => p.path.startsWith(r.arg + "/")), false, r.arg);
   if (r.kind === "p") return renderFileView(screen, r.arg);
 }
 
@@ -631,7 +666,8 @@ function renderHome(el) {
   const topics = Object.entries(S.index.topics);
   const recent = [...pages].filter((p) => p.date).sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 6);
   const maxY = Math.max(1, ...years.map((y) => y[1]));
-  const byGroup = GROUP_ORDER.map((g) => [g, topics.filter(([, t]) => (t.group || "기타") === g)]).filter(([, l]) => l.length);
+  const groupsAll = [...GROUP_ORDER, ...new Set(topics.map(([, t]) => t.group || "기타").filter((g) => !GROUP_ORDER.includes(g)))];
+  const byGroup = groupsAll.map((g) => [g, topics.filter(([, t]) => (t.group || "기타") === g).sort(([a], [b]) => cmpTopic(a, b))]).filter(([, l]) => l.length);
   const now = studyingNow();
   const act = monthlyActivity(12);
   const maxA = Math.max(1, ...act.map((a) => a.n));
@@ -664,7 +700,7 @@ function renderHome(el) {
       <div class="list">${recent.map(listItem).join("") || `<div class="empty">아직 글이 없어요</div>`}</div>
     </section>
     <section class="band alt">
-      <div class="sec-head"><div class="num">02</div><h2>주제</h2></div>
+      <div class="sec-head"><div class="num">02</div><h2>주제</h2><button class="btn small ghost" id="h-order">순서 바꾸기</button></div>
       ${byGroup.map(([g, list]) => `
         <div class="grp-h">${esc(g)}</div>
         <div class="cards">${list.map(([folder, t]) => {
@@ -681,6 +717,7 @@ function renderHome(el) {
       <div class="sec-head"><div class="num">04</div><h2>연도</h2></div>
       <div class="years">${years.map(([y, n]) => `<a class="yr" href="#/y/${encodeURIComponent(y)}"><span class="y">${esc(y)}</span><span class="bar" style="width:${Math.max(2, (n / maxY) * 100)}%"></span><span class="n">${n}개</span></a>`).join("")}</div>
     </section>`;
+  $("#h-order").onclick = () => guard(reorderTopics);
 }
 
 /* 최근 90일(없으면 가장 최근 글)에서 가장 많이 단 태그 */
@@ -719,7 +756,7 @@ function listItem(p) {
   return `<a class="li" href="#/p/${encPath(p.path)}">
     <span class="tt">${esc(p.title)}</span>
     <span class="dt">${esc(p.date || "")}</span>
-    <span class="sub"><span>${esc(topicName(folder))}</span>${p.tags.map((t) => `<span class="tg" ${tagStyle(t)}>${esc(t)}</span>`).join("")}</span>
+    <span class="sub"><span>${esc(topicName(folder))}${p.path.split("/").length > 2 ? ` / ${esc(p.path.split("/").slice(1, -1).map((d, i, a) => folderLabel([folder, ...a.slice(0, i + 1)].join("/"))).join(" / "))}` : ""}</span>${p.tags.map((t) => `<span class="tg" ${tagStyle(t)}>${esc(t)}</span>`).join("")}</span>
   </a>`;
 }
 
@@ -737,15 +774,16 @@ function renderList(el, eyebrow, title, pages, byMonth = false, folder = null) {
   } else body = `<div class="list">${sorted.map(listItem).join("") || `<div class="empty">글이 없어요</div>`}</div>`;
   el.innerHTML = `
     <header class="doc">
-      <div class="eyebrow">${esc(eyebrow)}</div>
+      <div class="eyebrow">${folder?.includes("/") ? crumbs(folder) : esc(eyebrow)}</div>
       <h1>${esc(title)}</h1>
       <p class="lead">글 ${pages.length}개</p>
-      ${folder ? `<div class="toolbar"><button class="btn" id="l-new">이 주제에 새 글</button><button class="btn" id="l-up">파일 올리기</button>${folder.includes("/") ? "" : `<button class="btn" id="l-topic">이름·묶음 바꾸기</button>`}</div>` : ""}
+      ${folder ? `<div class="toolbar"><button class="btn" id="l-new">여기에 새 글</button><button class="btn" id="l-sub">하위 폴더</button><button class="btn" id="l-up">파일 올리기</button>${folder.includes("/") ? "" : `<button class="btn" id="l-topic">이름·묶음 바꾸기</button>`}</div>` : ""}
     </header>
     ${body}`;
   if (folder) {
     $("#l-new").onclick = () => guard(() => newPage(folder));
     $("#l-up").onclick = () => pickUpload(folder);
+    $("#l-sub").onclick = () => guard(() => newTopic(folder));
     $("#l-topic")?.addEventListener("click", () => guard(() => editTopic(folder)));
   }
 }
@@ -761,7 +799,7 @@ async function renderFileView(el, path) {
   const folder = path.split("/")[0];
   const ghUrl = `https://github.com/${S.cfg.owner}/${S.cfg.repo}/blob/${S.cfg.branch}/${encPath(path)}`;
   const tools = `<div class="toolbar">
-      ${path.endsWith(".md") ? `<button class="btn" id="v-edit">수정</button>` : ""}
+      ${path.endsWith(".md") ? `<button class="btn" id="v-edit">수정</button><button class="btn" id="v-child">하위 글 쓰기</button>` : ""}
       <button class="btn" id="v-rename">이름·위치 바꾸기</button>
       <button class="btn danger" id="v-delete">삭제</button>
       <a class="btn ghost" href="${ghUrl}" target="_blank" rel="noopener">GitHub에서 보기</a>
@@ -784,7 +822,7 @@ async function renderFileView(el, path) {
   const content = body.replace(new RegExp(`^\\s*# ${title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\n`), "");
   el.innerHTML = `
     <header class="doc">
-      <div class="eyebrow"><a href="#/f/${encPath(folder)}">${esc(topicName(folder))}</a></div>
+      <div class="eyebrow">${crumbs(path)}</div>
       <h1>${esc(title)}</h1>
       <dl class="meta">
         ${meta.date ? `<div class="r"><dt>작성일</dt><dd><a href="#/y/${esc(encodeURIComponent(meta.date.slice(0, 4)))}">${esc(meta.date)}</a></dd></div>` : ""}
@@ -802,6 +840,7 @@ async function renderFileView(el, path) {
 
 function bindFileTools(path) {
   $("#v-edit")?.addEventListener("click", () => guard(async () => { if (await ensureAuth()) await openEditor(path); }));
+  $("#v-child")?.addEventListener("click", () => guard(() => newPage(path.replace(/\.md$/, ""))));
   $("#v-rename").onclick = () => guard(() => renamePath(path, false));
   $("#v-delete").onclick = () => guard(() => deletePath(path, false));
 }
@@ -939,13 +978,18 @@ async function saveEditor() {
   go(`#/p/${encPath(ed.path)}`);
 }
 
+/* 폴더 바로 아래 글·폴더 이름의 다음 번호 (02-X.md 와 짝 폴더 02-X/ 는 같은 번호) */
+function nextNum(folder) {
+  const pre = folder ? folder + "/" : "";
+  const nums = [...S.files.keys()].filter((p) => p.startsWith(pre))
+    .map((p) => parseInt(p.slice(pre.length).split("/")[0], 10)).filter((n) => !isNaN(n));
+  return String((nums.length ? Math.max(...nums) : 0) + 1).padStart(2, "0");
+}
+const safeName = (t, dflt) => t.replace(/[\\/:*?"<>|#%]/g, "-").replace(/\s+/g, " ").trim().slice(0, 60) || dflt;
+
 /* 파일 이름: 폴더 안 다음 번호 + 제목 */
 function nextFileName(folder, title) {
-  const nums = [...S.files.keys()].filter((p) => p.startsWith(folder + "/") && !p.slice(folder.length + 1).includes("/"))
-    .map((p) => parseInt(p.split("/").pop(), 10)).filter((n) => !isNaN(n));
-  const n = String((nums.length ? Math.max(...nums) : 0) + 1).padStart(2, "0");
-  const safe = title.replace(/[\\/:*?"<>|#%]/g, "-").replace(/\s+/g, " ").trim().slice(0, 60) || "새 글";
-  return `${folder}/${n}-${safe}.md`;
+  return `${folder}/${nextNum(folder)}-${safeName(title, "새 글")}.md`;
 }
 
 function folderOptions() {
@@ -956,7 +1000,7 @@ function folderOptions() {
     for (let i = 1; i < parts.length; i++) dirs.add(parts.slice(0, i).join("/"));
   }
   return [...dirs].filter((d) => !d.split("/").includes("images")).sort(cmpParts)
-    .map((d) => [d, d.includes("/") ? `${topicName(d.split("/")[0])} / ${d.split("/").slice(1).map(prettyName).join(" / ")}` : topicName(d)]);
+    .map((d) => [d, d.split("/").map((_, i, a) => folderLabel(a.slice(0, i + 1).join("/"))).join(" / ")]);
 }
 
 function currentFolder() {
@@ -969,10 +1013,12 @@ function currentFolder() {
 async function newPage(folder) {
   if (!(await ensureAuth())) return;
   folder ||= currentFolder();
+  const options = folderOptions();
+  if (folder && !options.some(([d]) => d === folder)) options.push([folder, folder.split("/").map((_, i, a) => folderLabel(a.slice(0, i + 1).join("/"))).join(" / ")]);
   const v = await modal({
     title: "새 글",
     fields: [
-      {name: "folder", label: "주제", type: "select", options: folderOptions(), value: folder},
+      {name: "folder", label: "넣을 곳", type: "select", options, value: folder},
       {name: "title", label: "제목", required: true},
       {name: "tags", label: "태그", hint: "쉼표로 구분", list: "tag-list"},
       {name: "date", label: "날짜", type: "date", value: today()},
@@ -984,26 +1030,38 @@ async function newPage(folder) {
   await openEditor(path, {meta: {title: v.title, date: v.date, tags: splitTags(v.tags)}, body: ""});
 }
 
-async function newTopic() {
+/* 새 주제(맨 위 폴더) 또는 하위 폴더. 깃은 빈 폴더를 못 담아서 첫 글을 같이 만든다 */
+async function newTopic(parent = "") {
   if (!(await ensureAuth())) return;
+  const top = (v) => !v.parent;
   const v = await modal({
-    title: "새 주제",
-    html: "<p>주제는 폴더 하나예요. 첫 글을 같이 만들어야 폴더가 생겨요.</p>",
+    title: "새 주제·폴더",
+    html: "<p>상위 폴더를 고르면 그 안에 하위 폴더를 만들어요. 깊이 제한은 없어요. 첫 글을 같이 만들어야 폴더가 생겨요.</p>",
     fields: [
-      {name: "name", label: "주제 이름", required: true},
-      {name: "folder", label: "폴더 이름", hint: "영어 소문자·숫자·- (예: kotlin)", required: true},
-      {name: "group", label: "묶음", list: "group-list", value: "기타"},
+      {name: "parent", label: "상위 폴더", type: "select", options: [["", "(맨 위 — 새 주제)"], ...folderOptions()], value: parent},
+      {name: "name", label: "이름", required: true},
+      {name: "folder", label: "폴더 이름", hint: "영어 소문자·숫자·- (예: kotlin)", required: true, when: top},
+      {name: "group", label: "묶음", list: "group-list", value: "기타", when: top},
       {name: "title", label: "첫 글 제목", required: true},
     ],
     ok: "만들기",
   });
-  if (!v) return;
-  const folder = v.folder.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "");
-  if (!folder || !v.title) return toast("폴더 이름과 첫 글 제목이 필요해요", true);
+  if (!v || !v.name || !v.title) return;
+  let folder;
+  if (v.parent) {
+    folder = `${v.parent}/${nextNum(v.parent)}-${safeName(v.name, "새 폴더")}`;
+  } else {
+    folder = v.folder.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/^-+|-+$/g, "");
+    if (!folder) return toast("폴더 이름이 필요해요 (영어 소문자·숫자·-)", true);
+    if (HIDDEN_DIRS.includes(folder)) return toast("쓸 수 없는 폴더 이름이에요", true);
+  }
   if ([...S.files.keys()].some((p) => p.startsWith(folder + "/"))) return toast("이미 있는 폴더예요", true);
-  const path = `${folder}/01-${v.title.replace(/[\\/:*?"<>|#%]/g, "-").trim().slice(0, 60)}.md`;
-  await commit([{path, text: composeDoc(v.title, today(), [], "")}, {path: "__topic__", topic: {[folder]: {name: v.name, group: v.group || "기타"}}}], `새 주제: ${v.name}`);
-  toast("주제를 만들었어요");
+  const path = `${folder}/01-${safeName(v.title, "새 글")}.md`;
+  const changes = [{path, text: composeDoc(v.title, today(), [], "")}];
+  if (!v.parent) changes.push({path: "__topic__", topic: {[folder]: {name: v.name, group: v.group || "기타", order: nextOrder()}}});
+  await commit(changes, v.parent ? `새 폴더: ${folder}` : `새 주제: ${v.name}`);
+  if (v.parent) S.open.add(v.parent);
+  toast(v.parent ? "폴더를 만들었어요" : "주제를 만들었어요");
   go(`#/p/${encPath(path)}`);
 }
 
@@ -1015,8 +1073,41 @@ async function editTopic(folder) {
     fields: [{name: "name", label: "주제 이름", value: t.name, required: true}, {name: "group", label: "묶음", value: t.group, list: "group-list"}],
   });
   if (!v || !v.name) return;
-  await commit([{path: "__topic__", topic: {[folder]: {name: v.name, group: v.group || "기타"}}}], `주제 이름: ${folder} → ${v.name}`);
+  const group = v.group || "기타";
+  const order = group === t.group && t.order != null ? t.order : nextOrder();
+  await commit([{path: "__topic__", topic: {[folder]: {name: v.name, group, order}}}], `주제 이름: ${folder} → ${v.name}`);
   toast("바꿨어요");
+  render();
+}
+
+/* 주제 순서: 묶음 안에서 ↑↓ 로 옮기고, 확인하면 모든 주제에 order 를 1부터 다시 매긴다 */
+async function reorderTopics() {
+  if (!(await ensureAuth())) return;
+  const folders = Object.keys(S.index.topics);
+  const groups = [...GROUP_ORDER, ...new Set(folders.map(topicGroup).filter((g) => !GROUP_ORDER.includes(g)))]
+    .map((g) => [g, folders.filter((f) => topicGroup(f) === g).sort(cmpTopic)]).filter(([, l]) => l.length);
+  const html = `<p>같은 묶음 안에서 순서를 바꿔요. 다른 묶음으로 옮기려면 「주제 이름·묶음 바꾸기」를 쓰세요.</p>
+    <div class="reorder">${groups.map(([g, l]) => `<div class="ro-g"><div class="ro-h">${esc(g)}</div><ol>${l.map((f) => `
+      <li data-folder="${esc(f)}"><span class="dot" style="background:${groupColor(g)}"></span><span class="lbl">${esc(topicName(f))}</span>
+        <button type="button" class="btn small ghost" data-mv="-1" aria-label="위로">↑</button><button type="button" class="btn small ghost" data-mv="1" aria-label="아래로">↓</button></li>`).join("")}</ol></div>`).join("")}</div>`;
+  const v = await modal({
+    title: "주제 순서", html, ok: "저장",
+    onOpen: (body) => body.querySelector(".reorder").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-mv]");
+      if (!b) return;
+      const li = b.closest("li");
+      if (b.dataset.mv === "-1" && li.previousElementSibling) li.previousElementSibling.before(li);
+      if (b.dataset.mv === "1" && li.nextElementSibling) li.nextElementSibling.after(li);
+      b.focus();
+    }),
+    read: (body) => ({order: [...body.querySelectorAll(".reorder li")].map((li) => li.dataset.folder)}),
+  });
+  if (!v) return;
+  const topic = {};
+  v.order.forEach((f, i) => { topic[f] = {name: topicName(f), group: topicGroup(f), order: i + 1}; });
+  if (v.order.every((f) => S.index.topics[f].order === topic[f].order)) return toast("바뀐 순서가 없어요");
+  await commit([{path: "__topic__", topic}], "주제 순서 바꾸기");
+  toast("순서를 바꿨어요");
   render();
 }
 
@@ -1235,7 +1326,8 @@ $("#search").oninput = () => renderNav();
 $("#show-hidden").onchange = () => renderNav();
 $("#btn-menu").onclick = () => $("#sidebar").classList.toggle("open");
 $("#btn-new-page").onclick = () => guard(() => newPage());
-$("#btn-new-topic").onclick = () => guard(newTopic);
+$("#btn-new-topic").onclick = () => guard(() => newTopic());
+$("#btn-order").onclick = () => guard(reorderTopics);
 $("#btn-upload").onclick = () => pickUpload();
 $("#file-input").onchange = (e) => guard(() => uploadFiles(e.target.files, uploadFolder));
 $("#btn-insert-image").onclick = () => { $("#image-input").value = ""; $("#image-input").click(); };
