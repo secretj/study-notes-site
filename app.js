@@ -39,6 +39,31 @@ const DEFAULT_TOPICS = { // tools/build_index.py 의 DEFAULT_TOPICS 와 같게
   "jenkins": ["젠킨스 Jenkins", "도구"], "project-nplit": ["프로젝트 NPLIT", "프로젝트·업무"],
   "dreamsys-training": ["드림시스 업무 교육", "프로젝트·업무"],
 };
+/* 태그 색: 이름을 해시해서 늘 같은 색을 고른다. [글자, 바탕, 테두리] */
+const TAG_PALETTE = [
+  ["#0a6fb5", "#e8f2fb", "#c4dcf2"], ["#0b7f8f", "#e4f6f8", "#bde6ec"], ["#1f7a44", "#e8f6ee", "#c2e5d0"],
+  ["#5b7a12", "#f1f7e2", "#d7e8b0"], ["#8a6400", "#fbf3dc", "#efdca2"], ["#a8501a", "#fdeee6", "#f4cdb5"],
+  ["#b0302a", "#fdecea", "#f3c4c0"], ["#a8337a", "#fbe9f3", "#efc1dc"], ["#6a2fa0", "#f3ecf9", "#dccbee"],
+  ["#3e4fb0", "#eceffb", "#c9d0f1"], ["#4b5d73", "#eef2f6", "#d0d9e3"],
+];
+/* 많이 쓴 태그부터 팔레트를 차례로 준다(상위 11개는 서로 다른 색). 목록에 없는 태그는 이름 해시로 고른다. */
+let tagColorIdx = new Map();
+function rebuildTagColors() {
+  const count = new Map();
+  for (const p of S.index.pages) for (const t of p.tags) count.set(t, (count.get(t) || 0) + 1);
+  const order = [...count.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([t]) => t);
+  tagColorIdx = new Map(order.map((t, i) => [t, i % TAG_PALETTE.length]));
+}
+function tagStyle(tag) {
+  let i = tagColorIdx.get(tag);
+  if (i == null) {
+    let h = 5381;
+    for (const ch of tag.toLowerCase()) h = ((h << 5) + h + ch.codePointAt(0)) >>> 0;
+    i = h % TAG_PALETTE.length;
+  }
+  const [c, b, d] = TAG_PALETTE[i];
+  return `style="--tc:${c};--tb:${b};--td:${d}"`;
+}
 const IMG_EXT = /\.(png|jpe?g|gif|webp|svg|bmp|ico)$/i;
 const MIME = {png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", ico: "image/x-icon", pdf: "application/pdf"};
 
@@ -98,6 +123,7 @@ async function loadTree() {
     S.index.pages ||= [];
     S.headSha = null;
     S.files = new Map(S.index.pages.map((p) => [p.path, {sha: null, size: null}]));
+    rebuildTagColors();
     return;
   }
   const ref = await gh(`/git/ref/heads/${encodeURIComponent(S.cfg.branch)}`);
@@ -111,6 +137,7 @@ async function loadTree() {
   S.index = idx ? JSON.parse(await blobText(idx.sha)) : {topics: {}, pages: []};
   S.index.topics ||= {};
   S.index.pages ||= [];
+  rebuildTagColors();
 }
 
 async function blobBytes(sha) {
@@ -505,12 +532,12 @@ function allYears() {
   return [...m.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
 }
 
-function navList(items, hrefOf, active) {
+function navList(items, hrefOf, active, dot = false) {
   const ul = document.createElement("ul");
   for (const [key, n] of items) {
     const li = document.createElement("li");
     li.className = "node";
-    li.innerHTML = `<div class="row ${active === key ? "on" : ""}"><span class="file">#</span><span class="lbl">${esc(key)}</span><span class="cnt">${n}</span></div>`;
+    li.innerHTML = `<div class="row ${active === key ? "on" : ""}">${dot ? `<span class="dot tagdot" ${tagStyle(key)}></span>` : `<span class="file"></span>`}<span class="lbl">${esc(key)}</span><span class="cnt">${n}</span></div>`;
     li.firstChild.onclick = () => go(hrefOf(key));
     ul.append(li);
   }
@@ -520,7 +547,7 @@ function renderTagNav() {
   const q = $("#search").value.trim().toLowerCase();
   const items = allTags().filter(([t]) => !q || t.toLowerCase().includes(q));
   const r = route();
-  return items.length ? navList(items, (t) => `#/t/${encodeURIComponent(t)}`, r.kind === "t" ? r.arg : null)
+  return items.length ? navList(items, (t) => `#/t/${encodeURIComponent(t)}`, r.kind === "t" ? r.arg : null, true)
     : Object.assign(document.createElement("div"), {className: "empty", textContent: "태그가 없어요"});
 }
 function renderYearNav() {
@@ -648,7 +675,7 @@ function renderHome(el) {
     </section>
     <section class="band">
       <div class="sec-head"><div class="num">03</div><h2>태그</h2></div>
-      <div class="cloud">${tags.map(([t, n]) => `<a class="chip lg" href="#/t/${encodeURIComponent(t)}">${esc(t)} <b>${n}</b></a>`).join("")}</div>
+      <div class="cloud">${tags.map(([t, n]) => `<a class="chip lg t" ${tagStyle(t)} href="#/t/${encodeURIComponent(t)}">${esc(t)} <b>${n}</b></a>`).join("")}</div>
     </section>
     <section class="band alt">
       <div class="sec-head"><div class="num">04</div><h2>연도</h2></div>
@@ -692,7 +719,7 @@ function listItem(p) {
   return `<a class="li" href="#/p/${encPath(p.path)}">
     <span class="tt">${esc(p.title)}</span>
     <span class="dt">${esc(p.date || "")}</span>
-    <span class="sub"><span>${esc(topicName(folder))}</span>${p.tags.map((t) => `<span class="tg">${esc(t)}</span>`).join("")}</span>
+    <span class="sub"><span>${esc(topicName(folder))}</span>${p.tags.map((t) => `<span class="tg" ${tagStyle(t)}>${esc(t)}</span>`).join("")}</span>
   </a>`;
 }
 
@@ -761,7 +788,7 @@ async function renderFileView(el, path) {
       <h1>${esc(title)}</h1>
       <dl class="meta">
         ${meta.date ? `<div class="r"><dt>작성일</dt><dd><a href="#/y/${esc(encodeURIComponent(meta.date.slice(0, 4)))}">${esc(meta.date)}</a></dd></div>` : ""}
-        ${tags.length ? `<div class="r"><dt>태그</dt><dd>${tags.map((t) => `<a class="chip" href="#/t/${encodeURIComponent(t)}">${esc(t)}</a>`).join("")}</dd></div>` : ""}
+        ${tags.length ? `<div class="r"><dt>태그</dt><dd>${tags.map((t) => `<a class="chip t" ${tagStyle(t)} href="#/t/${encodeURIComponent(t)}">${esc(t)}</a>`).join("")}</dd></div>` : ""}
         ${/^https?:\/\//.test(meta.source || "") ? `<div class="r"><dt>원본</dt><dd><a href="${esc(meta.source)}" target="_blank" rel="noopener">노션에서 보기</a></dd></div>` : ""}
       </dl>
       ${tools}

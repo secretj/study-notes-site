@@ -142,6 +142,10 @@ header.doc .lead {font-size:16.5px; color:var(--ink-2); max-width:720px;}
 .chip:hover {border-color:var(--accent); color:var(--accent);}
 .chip b {font-weight:600; color:var(--ink-3); font-size:11.5px;}
 .chip.lg {font-size:13.5px; padding:4px 12px;}
+.chip.t {color:var(--tc); background:var(--tb); border-color:var(--td); font-weight:500;}
+.chip.t:hover {color:var(--tc); border-color:var(--tc); filter:saturate(1.2);}
+.chip.t b {color:var(--tc); opacity:.7;}
+.tagdot {background:var(--tc) !important; border-radius:50%;}
 .toolbar {display:flex; gap:6px; flex-wrap:wrap; margin-top:16px;}
 .doc-wrap {display:grid; grid-template-columns:minmax(0,1fr) 200px; gap:40px; align-items:start;}
 .doc-wrap.no-toc {grid-template-columns:minmax(0,1fr);}
@@ -216,7 +220,7 @@ header.doc .lead {font-size:16.5px; color:var(--ink-2); max-width:720px;}
 .li .tt {font-weight:600; color:var(--ink); font-size:15px;}
 .li .sub {grid-column:1; font-size:12.5px; color:var(--ink-3); display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
 .li .dt {grid-row:1 / span 2; grid-column:2; font-size:12.5px; color:var(--ink-3); font-variant-numeric:tabular-nums; align-self:center;}
-.li .tg {font-size:11.5px; padding:0 7px; border:1px solid var(--line); border-radius:999px;}
+.li .tg {font-size:11.5px; padding:0 8px; border:1px solid var(--td, var(--line)); border-radius:999px; color:var(--tc, var(--ink-3)); background:var(--tb, transparent); font-weight:500;}
 .month-h {font-size:12px; font-weight:600; color:var(--ink-3); letter-spacing:.04em; margin:22px 0 4px;}
 
 /* 편집기 */
