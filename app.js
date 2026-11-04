@@ -1018,7 +1018,7 @@ async function start() {
     const why = {
       401: "토큰이 틀렸거나 만료·폐기됐어요. 새 토큰을 넣어 주세요.",
       403: "토큰에 권한이 부족해요. 토큰 설정에서 Contents 를 Read and write 로 바꿔 주세요.",
-      404: "이 토큰으로는 저장소가 안 보여요. 토큰 설정의 Repository access 를 'Only select repositories' 로 바꾸고 이 저장소를 골라 주세요. 저장소 이름·브랜치도 확인해 주세요.",
+      404: `이 토큰으로는 ${S.cfg.owner}/${S.cfg.repo} 가 안 보여요. 토큰 설정의 Repository access 에 이 저장소(사이트 코드 저장소가 아닌 글 저장소)가 들어 있는지, 저장소 이름·브랜치가 맞는지 확인해 주세요.`,
     }[e.status];
     if (why) return showLogin(`들어가지 못했어요 (${e.status}). ${why}`);
     throw e;
