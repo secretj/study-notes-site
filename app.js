@@ -1015,7 +1015,12 @@ async function start() {
   $("#app").hidden = false;
   try { await loadTree(); }
   catch (e) {
-    if (e.status === 401 || e.status === 404 || e.status === 403) return showLogin(`들어가지 못했어요 (${e.message}). 저장소 이름과 토큰 권한을 확인해 주세요.`);
+    const why = {
+      401: "토큰이 틀렸거나 만료·폐기됐어요. 새 토큰을 넣어 주세요.",
+      403: "토큰에 권한이 부족해요. 토큰 설정에서 Contents 를 Read and write 로 바꿔 주세요.",
+      404: "이 토큰으로는 저장소가 안 보여요. 토큰 설정의 Repository access 를 'Only select repositories' 로 바꾸고 이 저장소를 골라 주세요. 저장소 이름·브랜치도 확인해 주세요.",
+    }[e.status];
+    if (why) return showLogin(`들어가지 못했어요 (${e.status}). ${why}`);
     throw e;
   }
   render();
