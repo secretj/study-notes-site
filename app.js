@@ -12,7 +12,20 @@ const API = (() => {
   try { if (v && local(location.hostname) && local(new URL(v).hostname)) return v.replace(/\/+$/, ""); } catch {}
   return "https://api.github.com";
 })();
+/* 상단 패널에 보이는 내 정보. 여기만 고치면 된다. */
+const PROFILE = {
+  name: "박진형",
+  handle: "secretj",
+  role: "Backend Developer",
+  tagline: "PHP·Spring 으로 일하다 Go 로 넘어가는 중이에요. 배운 걸 잊기 전에 여기 적어 둬요.",
+  links: [
+    ["GitHub", "https://github.com/secretj"],
+    ["이력서", "https://jinhyeong.hichecky.com"],
+    ["글 저장소", "https://github.com/secretj/study-notes"],
+  ],
+};
 const CFG_KEY = "study-notes.cfg";
+const DEFAULT_CFG = {owner: "secretj", repo: "study-notes", branch: "main"};
 const HIDDEN_DIRS = ["tools", "_raw", ".github"];
 const GROUP_ORDER = ["언어", "프레임워크", "설계", "기초", "도구", "프로젝트·업무", "기타"];
 const GROUP_COLOR = {"언어": "--go", "프레임워크": "--file", "설계": "--p8", "기초": "--db", "도구": "--py", "프로젝트·업무": "--java", "기타": "--line-2"};
@@ -72,7 +85,21 @@ async function gh(path, opts = {}) {
   return res.status === 204 ? null : res.json();
 }
 
+const authed = () => !!S.cfg?.token;
+const rawURL = (path) => `https://raw.githubusercontent.com/${S.cfg.owner}/${S.cfg.repo}/${encodeURIComponent(S.cfg.branch)}/${encPath(path)}`;
+
+/* 토큰이 있으면 API 로 전체 파일 목록을, 없으면 공개 raw 의 index.json 으로 글 목록만 읽는다. */
 async function loadTree() {
+  if (!authed()) {
+    const res = await fetch(rawURL("index.json"), {cache: "no-cache"});
+    if (!res.ok) throw Object.assign(new Error(`${res.status} index.json`), {status: res.status});
+    S.index = await res.json();
+    S.index.topics ||= {};
+    S.index.pages ||= [];
+    S.headSha = null;
+    S.files = new Map(S.index.pages.map((p) => [p.path, {sha: null, size: null}]));
+    return;
+  }
   const ref = await gh(`/git/ref/heads/${encodeURIComponent(S.cfg.branch)}`);
   const commit = await gh(`/git/commits/${ref.object.sha}`);
   const tree = await gh(`/git/trees/${commit.tree.sha}?recursive=1`);
@@ -94,22 +121,45 @@ async function blobBytes(sha) {
   return bytes;
 }
 
+async function fileBytes(path) {
+  const f = S.files.get(path);
+  if (authed()) {
+    if (!f) return null;
+    return blobBytes(f.sha);
+  }
+  const res = await fetch(rawURL(path));
+  return res.ok ? new Uint8Array(await res.arrayBuffer()) : null;
+}
+
+const decodeText = (bytes) => new TextDecoder("utf-8", {ignoreBOM: true}).decode(bytes);
+
 async function blobText(sha) {
   if (S.textCache.has(sha)) return S.textCache.get(sha);
-  const t = new TextDecoder("utf-8", {ignoreBOM: true}).decode(await blobBytes(sha));
+  const t = decodeText(await blobBytes(sha));
   S.textCache.set(sha, t);
   return t;
 }
 
+async function fileText(path) {
+  const key = authed() ? S.files.get(path)?.sha : `raw:${path}`;
+  if (key && S.textCache.has(key)) return S.textCache.get(key);
+  const bytes = await fileBytes(path);
+  if (!bytes) throw Object.assign(new Error(`404 ${path}`), {status: 404});
+  const t = decodeText(bytes);
+  if (key) S.textCache.set(key, t);
+  return t;
+}
+
 async function blobURL(path) {
-  const f = S.files.get(path);
-  if (!f) return null;
-  if (S.blobCache.has(f.sha)) return S.blobCache.get(f.sha);
+  const key = authed() ? S.files.get(path)?.sha : `raw:${path}`;
+  if (!key) return null;
+  if (S.blobCache.has(key)) return S.blobCache.get(key);
   const ext = path.split(".").pop().toLowerCase();
-  let data = await blobBytes(f.sha);
+  let data = await fileBytes(path);
+  if (!data) return null;
   if (ext === "svg") data = DOMPurify.sanitize(new TextDecoder().decode(data), {USE_PROFILES: {svg: true, svgFilters: true}});
   const url = URL.createObjectURL(new Blob([data], {type: MIME[ext] || "application/octet-stream"}));
-  S.blobCache.set(f.sha, url);
+  S.blobCache.set(key, url);
   return url;
 }
 
@@ -204,7 +254,7 @@ async function nextIndex(changes, base) {
     if (!isPage(c.path)) continue;
     if (c.delete) { pages.delete(c.path); continue; }
     let text = c.text;
-    if (text == null && c.base64 != null) text = new TextDecoder("utf-8", {ignoreBOM: true}).decode(Uint8Array.from(atob(c.base64), (ch) => ch.charCodeAt(0)));
+    if (text == null && c.base64 != null) text = decodeText(Uint8Array.from(atob(c.base64), (ch) => ch.charCodeAt(0)));
     if (text == null && c.sha) text = await blobText(c.sha);
     const {meta} = parseFrontMatter(text);
     pages.set(c.path, {path: c.path, title: meta.title || stem(c.path), date: meta.date || "", tags: meta.tags || []});
@@ -239,7 +289,7 @@ async function guard(fn) {
   catch (e) {
     console.error(e);
     busy(false);
-    toast(e.status === 401 ? "토큰이 만료됐거나 틀렸어요. 나가기 후 다시 들어와 주세요." : e.status === 403 || e.status === 404 ? `권한이 없거나 찾을 수 없어요 (${e.message})` : `실패했어요: ${e.message}`, true);
+    toast(e.status === 401 ? "토큰이 만료됐거나 틀렸어요. 로그아웃 후 다시 로그인해 주세요." : e.status === 403 || e.status === 404 ? `권한이 없거나 찾을 수 없어요 (${e.message})` : `실패했어요: ${e.message}`, true);
   }
 }
 
@@ -269,6 +319,7 @@ function modal({title, html = "", fields = [], ok = "확인", danger = false}) {
         el.value = f.value ?? "";
         if (f.list) el.setAttribute("list", f.list);
         if (f.required) el.required = true;
+        if (f.type === "password") el.autocomplete = "off";
       }
       el.name = f.name;
       if (f.type !== "checkbox") lab.append(el);
@@ -339,12 +390,14 @@ function matchesSearch(p) {
 
 function renderNav() {
   $$(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === S.tab));
+  const home = route().kind === "home";
+  $$(".topnav [data-jump]").forEach((b) => b.classList.toggle("on", b.dataset.jump === "home" ? home : !home && b.dataset.jump === S.tab));
   const nav = $("#nav");
   nav.innerHTML = "";
   if (S.tab === "topic") nav.append(renderTopicTree());
   if (S.tab === "tag") nav.append(renderTagNav());
   if (S.tab === "year") nav.append(renderYearNav());
-  $("#count-badge").textContent = `${S.index.pages.length}`;
+  $("#count-badge").textContent = `글 ${S.index.pages.length}개${authed() ? "" : " · 보기 전용"}`;
   $("#tag-list").innerHTML = allTags().map(([t]) => `<option value="${esc(t)}">`).join("");
   $("#group-list").innerHTML = GROUP_ORDER.map((g) => `<option value="${esc(g)}">`).join("");
   const on = nav.querySelector(".row.on");
@@ -552,18 +605,33 @@ function renderHome(el) {
   const recent = [...pages].filter((p) => p.date).sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 6);
   const maxY = Math.max(1, ...years.map((y) => y[1]));
   const byGroup = GROUP_ORDER.map((g) => [g, topics.filter(([, t]) => (t.group || "기타") === g)]).filter(([, l]) => l.length);
+  const now = studyingNow();
+  const act = monthlyActivity(12);
+  const maxA = Math.max(1, ...act.map((a) => a.n));
+  const last = act.filter((a) => a.n).length;
   el.innerHTML = `
-    <header class="doc">
-      <div class="eyebrow">Study notes</div>
-      <h1>공부 기록</h1>
-      <p class="lead">공부하면서 정리한 글을 주제·태그·연도로 모아 봐요. 왼쪽 목록에서 고르거나, 위의 <b>새 글</b> 로 바로 써요.</p>
-      <div class="stats">
-        <div class="stat"><b>${pages.length}</b><span>글</span></div>
-        <div class="stat"><b>${topics.length}</b><span>주제</span></div>
-        <div class="stat"><b>${tags.length}</b><span>태그</span></div>
-        <div class="stat"><b>${years.filter(([y]) => /^\d/.test(y)).length}</b><span>연도</span></div>
+    <section class="hero">
+      <div class="hero-top">
+        <div class="avatar">${esc(PROFILE.handle[0].toUpperCase())}</div>
+        <div class="hero-id">
+          <div class="kicker">${esc(PROFILE.role)} · @${esc(PROFILE.handle)}</div>
+          <h1>${esc(PROFILE.name)}<small>의 공부 기록</small></h1>
+          <p class="tagline">${esc(PROFILE.tagline)}</p>
+          <div class="hero-links">${PROFILE.links.map(([t, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t)} ↗</a>`).join("")}</div>
+        </div>
+        ${now ? `<div class="now"><div class="l">지금 공부 중</div><b>${esc(now.tag)}</b><a href="#/p/${encPath(now.page.path)}">최근: ${esc(now.page.title)}</a></div>` : ""}
       </div>
-    </header>
+      <div class="hero-stats">
+        <div class="hs"><b>${pages.length}</b><span>글</span></div>
+        <div class="hs"><b>${topics.length}</b><span>주제</span></div>
+        <div class="hs"><b>${tags.length}</b><span>태그</span></div>
+        <div class="hs"><b>${yearSpan()}</b><span>년째 기록</span></div>
+        <div class="spark" title="최근 12개월 동안 쓴 글 수">
+          <div class="bars">${act.map((a) => `<i class="${a.n ? "on" : ""}" style="height:${Math.max(3, (a.n / maxA) * 42)}px" title="${a.key} · ${a.n}개"></i>`).join("")}</div>
+          <span>최근 12개월 · ${last}개월 동안 썼어요</span>
+        </div>
+      </div>
+    </section>
     <section class="band">
       <div class="sec-head"><div class="num">01</div><h2>최근 글</h2></div>
       <div class="list">${recent.map(listItem).join("") || `<div class="empty">아직 글이 없어요</div>`}</div>
@@ -586,6 +654,37 @@ function renderHome(el) {
       <div class="sec-head"><div class="num">04</div><h2>연도</h2></div>
       <div class="years">${years.map(([y, n]) => `<a class="yr" href="#/y/${encodeURIComponent(y)}"><span class="y">${esc(y)}</span><span class="bar" style="width:${Math.max(2, (n / maxY) * 100)}%"></span><span class="n">${n}개</span></a>`).join("")}</div>
     </section>`;
+}
+
+/* 최근 90일(없으면 가장 최근 글)에서 가장 많이 단 태그 */
+function studyingNow() {
+  const dated = S.index.pages.filter((p) => p.date).sort((a, b) => (a.date < b.date ? 1 : -1));
+  if (!dated.length) return null;
+  const since = new Date(Date.now() - 90 * 864e5).toLocaleDateString("sv-SE");
+  const recent = dated.filter((p) => p.date >= since);
+  const pool = recent.length ? recent : dated.slice(0, 1);
+  const count = new Map();
+  for (const p of pool) for (const t of p.tags) count.set(t, (count.get(t) || 0) + 1);
+  const tag = [...count.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  if (!tag) return null;
+  return {tag, page: pool.find((p) => p.tags.includes(tag))};
+}
+
+function yearSpan() {
+  const ys = S.index.pages.map((p) => parseInt(p.date, 10)).filter((y) => y > 1900);
+  return ys.length ? new Date().getFullYear() - Math.min(...ys) + 1 : 0;
+}
+
+function monthlyActivity(months) {
+  const out = [];
+  const d = new Date();
+  d.setDate(1);
+  for (let i = months - 1; i >= 0; i--) {
+    const m = new Date(d.getFullYear(), d.getMonth() - i, 1);
+    const key = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`;
+    out.push({key, n: S.index.pages.filter((p) => p.date.startsWith(key)).length});
+  }
+  return out;
 }
 
 function listItem(p) {
@@ -644,13 +743,13 @@ async function renderFileView(el, path) {
     const url = await blobURL(path);
     const isImg = IMG_EXT.test(path);
     el.innerHTML = `<header class="doc"><div class="eyebrow">${esc(topicName(folder))}</div><h1>${esc(path.split("/").pop())}</h1>
-      <dl class="meta"><div class="r"><dt>경로</dt><dd>${esc(path)}</dd></div><div class="r"><dt>크기</dt><dd>${(f.size / 1024).toFixed(1)} KB</dd></div></dl>${tools}</header>
+      <dl class="meta"><div class="r"><dt>경로</dt><dd>${esc(path)}</dd></div><div class="r"><dt>크기</dt><dd>${f.size != null ? `${(f.size / 1024).toFixed(1)} KB` : "-"}</dd></div></dl>${tools}</header>
       <article class="prose">${isImg ? `<img src="${url}" alt="">` : `<p><a href="${url}" download="${esc(path.split("/").pop())}">내려받기</a></p>`}</article>`;
     bindFileTools(path);
     return;
   }
   el.innerHTML = `<header class="doc"><div class="eyebrow">${esc(topicName(folder))}</div><h1>불러오는 중…</h1></header>`;
-  const text = await blobText(f.sha);
+  const text = await fileText(path);
   if (S.current !== path) return;
   const {meta, body} = parseFrontMatter(text);
   const title = meta.title || stem(path);
@@ -675,7 +774,7 @@ async function renderFileView(el, path) {
 }
 
 function bindFileTools(path) {
-  $("#v-edit")?.addEventListener("click", () => guard(() => openEditor(path)));
+  $("#v-edit")?.addEventListener("click", () => guard(async () => { if (await ensureAuth()) await openEditor(path); }));
   $("#v-rename").onclick = () => guard(() => renamePath(path, false));
   $("#v-delete").onclick = () => guard(() => deletePath(path, false));
 }
@@ -760,9 +859,8 @@ async function openEditor(path, preset = null) {
   let meta = {}, body = "", sha = null;
   if (preset) ({meta, body} = preset);
   else {
-    const f = S.files.get(path);
-    sha = f.sha;
-    ({meta, body} = parseFrontMatter(await blobText(f.sha)));
+    sha = S.files.get(path).sha;
+    ({meta, body} = parseFrontMatter(await fileText(path)));
     const title = meta.title || stem(path);
     body = body.replace(new RegExp(`^\\s*# ${title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\n`), "");
   }
@@ -841,7 +939,9 @@ function currentFolder() {
   return folderOptions()[0]?.[0] || "";
 }
 
-async function newPage(folder = currentFolder()) {
+async function newPage(folder) {
+  if (!(await ensureAuth())) return;
+  folder ||= currentFolder();
   const v = await modal({
     title: "새 글",
     fields: [
@@ -858,6 +958,7 @@ async function newPage(folder = currentFolder()) {
 }
 
 async function newTopic() {
+  if (!(await ensureAuth())) return;
   const v = await modal({
     title: "새 주제",
     html: "<p>주제는 폴더 하나예요. 첫 글을 같이 만들어야 폴더가 생겨요.</p>",
@@ -880,6 +981,7 @@ async function newTopic() {
 }
 
 async function editTopic(folder) {
+  if (!(await ensureAuth())) return;
   const t = S.index.topics[folder] || {name: folder, group: "기타"};
   const v = await modal({
     title: "주제 이름·묶음",
@@ -898,6 +1000,7 @@ function underPath(path, isDir) {
 }
 
 async function renamePath(path, isDir) {
+  if (!(await ensureAuth())) return;
   const sub = !isDir && path.endsWith(".md") ? path.replace(/\.md$/, "") : null;
   const hasSub = sub && [...S.files.keys()].some((p) => p.startsWith(sub + "/"));
   const v = await modal({
@@ -929,6 +1032,7 @@ async function renamePath(path, isDir) {
 }
 
 async function deletePath(path, isDir) {
+  if (!(await ensureAuth())) return;
   const sub = !isDir && path.endsWith(".md") ? path.replace(/\.md$/, "") : null;
   const subFiles = sub ? underPath(sub, true) : [];
   const list = underPath(path, isDir);
@@ -954,6 +1058,7 @@ function pickUpload(folder = currentFolder()) {
 }
 
 async function uploadFiles(files, folder) {
+  if (!(await ensureAuth())) return;
   files = [...files];
   if (!files.length) return;
   const v = await modal({
@@ -1005,55 +1110,99 @@ async function insertImages(files) {
 /* ---------------- 시작 ---------------- */
 
 function loadCfg() {
-  try { return JSON.parse(localStorage.getItem(CFG_KEY)); } catch { return null; }
+  try { return {...DEFAULT_CFG, ...(JSON.parse(localStorage.getItem(CFG_KEY)) || {})}; } catch { return {...DEFAULT_CFG}; }
+}
+const saveCfg = () => localStorage.setItem(CFG_KEY, JSON.stringify(S.cfg));
+
+function authError(e) {
+  return {
+    401: "토큰이 틀렸거나 만료·폐기됐어요. 새 토큰을 넣어 주세요.",
+    403: "토큰에 권한이 부족해요. 토큰 설정에서 Contents 를 Read and write 로 바꿔 주세요.",
+    404: `이 토큰으로는 ${S.cfg.owner}/${S.cfg.repo} 가 안 보여요. 토큰 설정의 Repository access 에 이 저장소(사이트 코드 저장소가 아닌 글 저장소)가 들어 있는지 확인해 주세요.`,
+  }[e.status];
+}
+
+function updateAuthUI() {
+  $("#btn-logout").textContent = authed() ? "로그아웃" : "로그인";
+  $("#show-hidden").closest("label").hidden = !authed();
+  if (!authed()) $("#show-hidden").checked = false;
+}
+
+function clearCaches() {
+  S.blobCache.forEach((u) => URL.revokeObjectURL(u));
+  S.blobCache.clear();
+  S.textCache.clear();
+}
+
+/* 쓰기 전에 부른다. 토큰이 없으면 입력받아 확인하고, 실패하면 보기 전용으로 남는다. */
+async function ensureAuth() {
+  if (authed()) return true;
+  const v = await modal({
+    title: "로그인",
+    html: `<p>쓰고 고치고 지우려면 GitHub 토큰이 필요해요. 토큰은 이 브라우저에만 저장돼요.</p>
+      <details class="help"><summary>토큰 만드는 법</summary><ol>
+        <li><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Fine-grained token 만들기</a>를 열어요.</li>
+        <li>Repository access 에서 <b>Only select repositories</b> → <code>${esc(S.cfg.owner)}/${esc(S.cfg.repo)}</code> 하나만 골라요. 사이트 코드 저장소(<code>study-notes-site</code>)가 아니에요.</li>
+        <li>Permissions → Repository permissions → <b>Contents: Read and write</b> 만 줘요.</li>
+      </ol></details>`,
+    fields: [{name: "token", label: "GitHub 토큰", type: "password", required: true}],
+    ok: "로그인",
+  });
+  if (!v || !v.token) return false;
+  S.cfg = {...S.cfg, token: v.token};
+  try {
+    await loadTree();
+  } catch (e) {
+    const why = authError(e);
+    S.cfg = {...S.cfg, token: undefined};
+    await loadTree().catch(() => {});
+    updateAuthUI();
+    toast(why ? `로그인하지 못했어요 (${e.status}). ${why}` : `로그인하지 못했어요: ${e.message}`, true);
+    return false;
+  }
+  saveCfg();
+  clearCaches();
+  updateAuthUI();
+  renderNav();
+  toast("로그인했어요");
+  return true;
 }
 
 async function start() {
   S.cfg = loadCfg();
-  if (!S.cfg?.token) return showLogin();
-  $("#login").hidden = true;
   $("#app").hidden = false;
   try { await loadTree(); }
   catch (e) {
-    const why = {
-      401: "토큰이 틀렸거나 만료·폐기됐어요. 새 토큰을 넣어 주세요.",
-      403: "토큰에 권한이 부족해요. 토큰 설정에서 Contents 를 Read and write 로 바꿔 주세요.",
-      404: `이 토큰으로는 ${S.cfg.owner}/${S.cfg.repo} 가 안 보여요. 토큰 설정의 Repository access 에 이 저장소(사이트 코드 저장소가 아닌 글 저장소)가 들어 있는지, 저장소 이름·브랜치가 맞는지 확인해 주세요.`,
-    }[e.status];
-    if (why) return showLogin(`들어가지 못했어요 (${e.status}). ${why}`);
-    throw e;
+    if (!authed() || !authError(e)) throw e;
+    toast(`저장된 토큰으로 들어가지 못해 보기 전용으로 열었어요. ${authError(e)}`, true);
+    S.cfg = {...S.cfg, token: undefined};
+    saveCfg();
+    await loadTree();
   }
+  updateAuthUI();
   render();
 }
 
-function showLogin(err) {
-  $("#app").hidden = true;
-  $("#login").hidden = false;
-  const cfg = loadCfg() || {};
-  $("#f-repo").value = cfg.owner ? `${cfg.owner}/${cfg.repo}` : "secretj/study-notes";
-  $("#f-branch").value = cfg.branch || "main";
-  $("#login-error").hidden = !err;
-  if (err) $("#login-error").textContent = err;
-}
-
-$("#login-form").onsubmit = async (e) => {
-  e.preventDefault();
-  const [owner, repo] = $("#f-repo").value.trim().split("/");
-  if (!owner || !repo) return showLogin("저장소는 owner/repo 형식으로 적어 주세요.");
-  localStorage.setItem(CFG_KEY, JSON.stringify({owner, repo, branch: $("#f-branch").value.trim() || "main", token: $("#f-token").value.trim()}));
-  $("#f-token").value = "";
-  guard(start);
-};
-$("#btn-logout").onclick = async () => {
+$("#btn-logout").onclick = () => guard(async () => {
+  if (!authed()) { if (await ensureAuth()) render(); return; }
   if (S.editing && !(await leaveEditor())) return;
-  localStorage.removeItem(CFG_KEY);
-  S.blobCache.forEach((u) => URL.revokeObjectURL(u));
-  S.blobCache.clear();
-  S.textCache.clear();
-  location.hash = "";
-  showLogin();
-};
+  S.cfg = {...S.cfg, token: undefined};
+  saveCfg();
+  clearCaches();
+  await loadTree();
+  updateAuthUI();
+  toast("로그아웃했어요. 계속 읽을 수는 있어요.");
+  render();
+});
 
+$$(".topnav button").forEach((b) => (b.onclick = () => {
+  S.tab = b.dataset.jump;
+  renderNav();
+  if (innerWidth <= 900) $("#sidebar").classList.add("open");
+}));
+$("#brand-mono").textContent = PROFILE.handle[0].toUpperCase();
+$("#brand-name").textContent = PROFILE.handle;
+document.title = `${PROFILE.name}의 공부 기록`;
 $$(".tabs button").forEach((b) => (b.onclick = () => { S.tab = b.dataset.tab; renderNav(); }));
 $("#search").oninput = () => renderNav();
 $("#show-hidden").onchange = () => renderNav();

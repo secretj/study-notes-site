@@ -3,8 +3,10 @@
 비공개 글 저장소([`secretj/study-notes`](https://github.com/secretj/study-notes))를 트리·태그·연도로 보여 주고, 브라우저에서 바로 쓰고·고치고·지우고·올리는 페이지예요.
 
 - 주소: https://secretj.github.io/study-notes-site/
-- 이 저장소에는 **사이트 코드만** 있어요. 글은 한 줄도 없어요.
-- 들어갈 때 GitHub fine-grained 토큰(글 저장소 하나, Contents: Read and write)을 넣어요. 토큰은 그 브라우저의 localStorage 에만 저장되고, GitHub API 말고 다른 곳으로 보내지 않아요.
+- 이 저장소에는 **사이트 코드만** 있어요. 글은 공개 저장소 `study-notes` 에 있어요.
+- **읽기는 로그인 없이** 돼요. 글 목록(`index.json`)과 글·그림을 `raw.githubusercontent.com` 에서 바로 받아요(5분 캐시).
+- **쓰기·수정·삭제·올리기를 누를 때만** GitHub fine-grained 토큰(글 저장소 하나, Contents: Read and write)을 물어요. 토큰은 그 브라우저의 localStorage 에만 저장되고, GitHub API 말고 다른 곳으로 보내지 않아요.
+- 상단 프로필 패널 문구는 `app.js` 맨 위 `PROFILE` 에서 고쳐요.
 
 ## 동작
 
